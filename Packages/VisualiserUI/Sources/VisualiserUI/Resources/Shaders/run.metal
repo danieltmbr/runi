@@ -2,58 +2,10 @@
 #include <SwiftUI/SwiftUI_Metal.h>
 using namespace metal;
 
-// Forward declarations from other .metal files
-struct WarpResult {
-    float f;
-    float2 q;
-    float2 r;
-};
-
+// Forward declarations — implemented in warp.metal and fbm.metal
+struct WarpResult { float f; float2 q; float2 r; };
 float fbm(float2 position, float octaves, float h);
-
-// Domain warp driven by pace-weighted time + running direction.
-//
-// animTime: pace-weighted time — advances faster when the runner pushes hard.
-// flowDir:  speed-weighted direction vector. Magnitude ≈ 0 at rest, ≈ 1 at max pace.
-//
-// The coordinate space (p) is never transformed — no translation, no stretch.
-// Direction works by amplifying the component of the first warp displacement (q)
-// that already happens to point in the running direction. This makes the second
-// warp layer sample from more displaced positions in that direction, producing
-// stronger distortion there while leaving the natural flow completely intact.
-WarpResult runWarp(float2 p, float octaves, float h, float animTime, float2 flowDir) {
-
-    // First warp layer — Inigo's opposing time signs for organic, non-repeating swirl.
-    float2 q = float2(
-        fbm(p + float2(0.7, 2.1) + animTime * 0.04,  octaves, h),
-        fbm(p + float2(5.2, 1.3) - animTime * 0.04,  octaves, h)
-    );
-
-    // Directional distortion amplification.
-    // Project q onto the running direction and boost that component.
-    // Where the warp already wants to push in the running direction it pushes harder;
-    // perpendicular displacement is completely unchanged.
-    float mag = length(flowDir);
-    if (mag > 0.05) {
-        float2 rDir = flowDir / mag;
-        q += rDir * dot(q, rDir) * mag * 0.7;
-    }
-
-    // Second warp layer — uses the (possibly boosted) q.
-    // 1.26× ratio on the opposing sign breaks symmetry (from lsl3RH).
-    float2 r = float2(
-        fbm(p + 4.0*q + float2(1.7, 9.2) + animTime * 0.06,   octaves, h),
-        fbm(p + 4.0*q + float2(8.3, 2.8) - animTime * 0.0756, octaves, h)
-    );
-
-    float f = fbm(p + 4.0*r, octaves, h);
-
-    WarpResult result;
-    result.f = f;
-    result.q = q;
-    result.r = r;
-    return result;
-}
+WarpResult runWarp(float2 p, float octaves, float h, float animTime, float2 flowDir);
 
 [[ stitchable ]] half4 runWarpShader(
                                      float2 position,

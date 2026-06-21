@@ -35,6 +35,9 @@ struct RuniWindow: View {
     @State
     private var navigationModel: NavigationModel
 
+    @State
+    private var imageWarpPhoto = ImageWarpPhotoHolder()
+
     #if os(macOS)
     @Environment(WindowCoordinator.self)
     private var windowCoordinator
@@ -80,6 +83,7 @@ struct RuniWindow: View {
             .transfer(library: library)
             .player(player)
             .environment(navigationModel)
+            .imageWarpPhoto(imageWarpPhoto)
             .modelContainer(modelContainer)
             #if os(macOS)
             .onChange(of: controlActiveState, initial: true) { _, state in

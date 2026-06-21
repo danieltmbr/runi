@@ -32,7 +32,7 @@ private struct WarpForm: View {
         VStack(alignment: .leading) {
             Text("Details")
                 .font(.caption)
-            Slider(value: $value.details, in: 1...12, step: 1)
+            Slider(value: $value.details, in: 1...12)
         }
         
         ColorPalettePicker(palette: $value.palette)

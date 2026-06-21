@@ -11,9 +11,9 @@ float fbm(float2 position, float octaves, float h)
     float f = 1.0;
     float a = 1.0;
     float t = 0.0;
-    for(int i=0; i<octaves; i++ )
+    for(int i=0; i<12; i++ )
     {
-        t += a * noised(f * position).x;
+        t += a * noised(f * position).x * clamp(octaves - float(i), 0.0, 1.0);
         position = m * position;
         f *= 2.01 + i * 0.01;
         a *= g;
