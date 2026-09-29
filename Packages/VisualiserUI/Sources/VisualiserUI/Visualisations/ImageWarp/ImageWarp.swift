@@ -5,7 +5,7 @@ import Foundation
 ///
 /// This struct stores only the animation parameters — smoothness, detail,
 /// intensity, radius, and coverage mode. The photo itself is transient
-/// view-layer state managed by `ImageWarpPhotoHolder` in the environment,
+/// view-layer state managed by `VisualiserPhotoHolder` in the environment,
 /// keeping this config small and cleanly serialisable.
 ///
 /// `FormAdjustable` conformance lives in `ImageWarpForm.swift`.
@@ -13,7 +13,7 @@ import Foundation
 ///
 /// - Note: Future improvement — the "base layer" concept (procedural noise vs.
 ///   a user photo) should eventually be selectable at the visualisation level,
-///   not buried inside a single option. `ImageWarpPhotoHolder` is the seed of
+///   not buried inside a single option. `VisualiserPhotoHolder` is the seed of
 ///   that architecture.
 ///
 public struct ImageWarp: Option, Equatable, Sendable, Codable {

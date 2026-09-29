@@ -15,6 +15,7 @@ public enum VisualisationConfig: Sendable {
     case imageWarp(ImageWarp)
     case runPath(RunPath)
     case colors(Gradients)
+    case voronoi(Voronoi)
 
     // MARK: - Init
 
@@ -24,6 +25,7 @@ public enum VisualisationConfig: Sendable {
         case let v as ImageWarp: self = .imageWarp(v)
         case is RunPath:         self = .runPath(RunPath())
         case is Gradients:       self = .colors(Gradients())
+        case let v as Voronoi:   self = .voronoi(v)
         default:
             throw EncodingError.invalidValue(
                 visualisation,
@@ -40,6 +42,7 @@ public enum VisualisationConfig: Sendable {
         case .imageWarp(let v): return v
         case .runPath:          return RunPath()
         case .colors:           return Gradients()
+        case .voronoi(let v):   return v
         }
     }
 }
@@ -49,7 +52,7 @@ public enum VisualisationConfig: Sendable {
 extension VisualisationConfig: Codable {
 
     private enum CodingKeys: String, CodingKey {
-        case warp, imageWarp, runPath, colors
+        case warp, imageWarp, runPath, colors, voronoi
     }
 
     public nonisolated init(from decoder: any Decoder) throws {
@@ -62,6 +65,8 @@ extension VisualisationConfig: Codable {
             self = .runPath(try container.decode(RunPath.self, forKey: .runPath))
         } else if container.contains(.colors) {
             self = .colors(try container.decode(Gradients.self, forKey: .colors))
+        } else if container.contains(.voronoi) {
+            self = .voronoi(try container.decode(Voronoi.self, forKey: .voronoi))
         } else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Unknown VisualisationConfig case")
@@ -76,6 +81,7 @@ extension VisualisationConfig: Codable {
         case .imageWarp(let v): try container.encode(v, forKey: .imageWarp)
         case .runPath(let v):   try container.encode(v, forKey: .runPath)
         case .colors(let v):    try container.encode(v, forKey: .colors)
+        case .voronoi(let v):   try container.encode(v, forKey: .voronoi)
         }
     }
 }

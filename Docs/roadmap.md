@@ -354,7 +354,7 @@ These are documented in `Docs/runi.md` but not in scope for the initial release:
 - **Run-to-Visualisation wiring UI** — let users customise which metric drives which shader parameter
 - **Concatenate/Merge runs** — multi-run visualisations, playlists
 - **Composable visualisations** — swap shader pipeline components (noise type, distortion, etc.)
-- **ImageWarp base layer selection** — currently the domain warp shader always distorts a user-selected photo. A natural generalisation is to let users choose the *base layer*: a procedural noise field (like the existing `Warp` visualisation) or a photo. `ImageWarpPhotoHolder` is already the seed of this architecture (photo lives outside the JSON config, cleanly separated from the animation parameters). The next step would be promoting "base layer" to a first-class concept at the visualisation level rather than a hidden implementation detail inside one option.
+- **ImageWarp base layer selection** — currently the domain warp shader always distorts a user-selected photo. A natural generalisation is to let users choose the *base layer*: a procedural noise field (like the existing `Warp` visualisation) or a photo. `VisualiserPhotoHolder` is already the seed of this architecture (photo lives outside the JSON config, cleanly separated from the animation parameters, and shared by `ImageWarp` and `Voronoi`). The next step would be promoting "base layer" to a first-class concept at the visualisation level rather than a hidden implementation detail inside one option.
 - **Collaboration** — CloudKit sharing of runs between users
 - **Favourites & Playlists** — enabled by persistence
 

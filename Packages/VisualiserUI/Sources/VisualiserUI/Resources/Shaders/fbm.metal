@@ -63,5 +63,4 @@ float3 fbmd(float2 position, float octaves, float h) {
     
     // Return grayscale color
     return half4(half3(value), 1.0);
-
 }

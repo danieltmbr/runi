@@ -11,21 +11,15 @@ import SwiftUI
 ///   - **Path**: warp is applied along the run path with a radius falloff,
 ///     with extra intensity near the current position.
 ///
-/// The photo itself is owned by `ImageWarpPhotoHolder` in the environment —
-/// `ImageWarpView` is the primary reader while `ImageWarpForm` is the writer.
-/// This keeps the transient photo bytes out of the JSON-serialised `ImageWarp` config.
+/// The photo itself is owned by `VisualiserPhotoHolder` in the environment and
+/// displayed through `VisualiserPhotoCanvas`. This keeps the transient photo bytes
+/// out of the JSON-serialised `ImageWarp` config.
 ///
 public struct ImageWarpView: View {
 
     let state: VisualiserState
 
     var configuration: Binding<ImageWarp>
-
-    @Environment(\.imageWarpPhoto)
-    private var photoHolder
-
-    @State
-    private var photoImage: Image?
 
     @State
     private var visiblePath: [SIMD2<Float>] = []
@@ -46,49 +40,26 @@ public struct ImageWarpView: View {
         let radius      = Float(configuration.wrappedValue.radius)
         let pathData    = visiblePath.withUnsafeBytes { Data($0) }
 
-        Group {
-            if let photoImage {
-                // `GeometryReader` measures the exact parent size so we can give
-                // the image a fixed frame that matches it precisely. This prevents
-                // the image's aspect-ratio negotiation from making the view taller
-                // or wider than the screen. `.clipped()` trims any overflow from
-                // the `.fill` content mode before `layerEffect` captures the layer.
-                // `maxSampleOffset: .zero` is safe because the shader clamps all
-                // sample positions to [0.5, size−0.5], never reading outside bounds.
-                GeometryReader { geo in
-                    photoImage
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .visualEffect { content, proxy in
-                            content.layerEffect(
-                                ShaderLibrary.bundle(.module).imageWarpShader(
-                                    .float2(proxy.size),
-                                    .float(animTime),
-                                    .float(octaves),
-                                    .float(h),
-                                    .float(intensity),
-                                    .float(modeFloat),
-                                    .float2(coordinates),
-                                    .float2(direction),
-                                    .float(radius),
-                                    .data(pathData)
-                                ),
-                                maxSampleOffset: .zero
-                            )
-                        }
-                }
-            } else {
-                ContentUnavailableView(
-                    "No Photo Selected",
-                    systemImage: "photo",
-                    description: Text("Choose a photo in the inspector to apply warp effects.")
+        // `maxSampleOffset: .zero` is safe because the shader clamps all
+        // sample positions to [0.5, size−0.5], never reading outside bounds.
+        VisualiserPhotoCanvas { photo in
+            photo.visualEffect { content, proxy in
+                content.layerEffect(
+                    ShaderLibrary.bundle(.module).imageWarpShader(
+                        .float2(proxy.size),
+                        .float(animTime),
+                        .float(octaves),
+                        .float(h),
+                        .float(intensity),
+                        .float(modeFloat),
+                        .float2(coordinates),
+                        .float2(direction),
+                        .float(radius),
+                        .data(pathData)
+                    ),
+                    maxSampleOffset: .zero
                 )
             }
-        }
-        .task(id: photoHolder.version) {
-            loadPhotoImage()
         }
         .onAppear {
             updatePath()
@@ -114,26 +85,6 @@ public struct ImageWarpView: View {
         case .position: return 1
         case .path:     return 2
         }
-    }
-
-    private func loadPhotoImage() {
-        guard let data = photoHolder.data else {
-            photoImage = nil
-            return
-        }
-        photoImage = makeImage(from: data)
-    }
-
-    private func makeImage(from data: Data) -> Image? {
-        #if canImport(UIKit)
-        guard let uiImage = UIImage(data: data) else { return nil }
-        return Image(uiImage: uiImage)
-        #elseif canImport(AppKit)
-        guard let nsImage = NSImage(data: data) else { return nil }
-        return Image(nsImage: nsImage)
-        #else
-        return nil
-        #endif
     }
 
     private func updatePath() {

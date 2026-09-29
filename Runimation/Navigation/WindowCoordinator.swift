@@ -1,6 +1,7 @@
 import CoreUI
 import RunKit
 import SwiftUI
+import VisualiserUI
 
 /// App-level coordinator that tracks whichever `RuniWindow` is currently key.
 ///
@@ -16,4 +17,5 @@ final class WindowCoordinator {
     var activeNavigationModel: NavigationModel?
     var activePlayer: RunPlayer?
     var activeNowPlaying: NowPlayingModel?
+    var activeVisualiserPhoto: VisualiserPhotoHolder?
 }

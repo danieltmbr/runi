@@ -3,6 +3,7 @@ import CoreUI
 import RunKit
 import RunUI
 import SwiftUI
+import VisualiserUI
 
 /// macOS floating window that tracks whichever player window is currently key.
 ///
@@ -20,7 +21,8 @@ struct CustomisationWindow: View {
         Group {
             if let nav = coordinator.activeNavigationModel,
                let player = coordinator.activePlayer,
-               let nowPlaying = coordinator.activeNowPlaying {
+               let nowPlaying = coordinator.activeNowPlaying,
+               let visualiserPhoto = coordinator.activeVisualiserPhoto {
                 VStack {
                     CustomisationPanel()
                         .padding()
@@ -29,6 +31,7 @@ struct CustomisationWindow: View {
                 .player(player)
                 .environment(nowPlaying)
                 .environment(nav)
+                .visualiserPhoto(visualiserPhoto)
             } else {
                 ContentUnavailableView(
                     "No Window Selected",
