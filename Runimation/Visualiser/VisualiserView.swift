@@ -40,6 +40,8 @@ private struct PlayerDrivenView: View {
     var body: some View {
         VisualiserCanvas(
             state: VisualiserState(
+                averageHeartRate: Float(run.averages.heartRate),
+                averageSpeed: Float(run.averages.speed),
                 coordinates: SIMD2(Float(segment.coordinate.x), Float(segment.coordinate.y)),
                 direction: SIMD2(Float(segment.direction.x), Float(segment.direction.y)),
                 elevation: Float(segment.elevation),

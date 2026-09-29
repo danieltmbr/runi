@@ -5,6 +5,8 @@ import SwiftUI
 /// Every voronoi cell is filled with the photo's colour at the cell's feature
 /// point. Around the current run coordinate the cells subdivide hierarchically,
 /// so the mosaic becomes denser — and the photo more detailed — where the runner is.
+/// The radii of that denser region come from `VoronoiRadiusModulator`, which
+/// either keeps them fixed or lets them follow the runner's effort.
 ///
 /// Driven by a `VisualiserState` value (constructed from run metrics in the app layer)
 /// and a `Voronoi` configuration binding for user-adjustable parameters.
@@ -17,15 +19,18 @@ public struct VoronoiView: View {
 
     var configuration: Binding<Voronoi>
 
+    private let modulator = VoronoiRadiusModulator()
+
     public init(state: VisualiserState, configuration: Binding<Voronoi>) {
         self.state = state
         self.configuration = configuration
     }
 
     public var body: some View {
+        let radii       = modulator.radii(for: configuration.wrappedValue, state: state)
         let gridSize    = Float(configuration.wrappedValue.gridSize)
-        let maxRadius   = Float(configuration.wrappedValue.maxRadius)
-        let minRadius   = Float(configuration.wrappedValue.minRadius)
+        let maxRadius   = Float(radii.max)
+        let minRadius   = Float(radii.min)
         let coordinates = state.coordinates
 
         // `maxSampleOffset: .zero` is safe because the shader clamps all

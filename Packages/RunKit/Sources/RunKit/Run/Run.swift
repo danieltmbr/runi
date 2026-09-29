@@ -116,10 +116,36 @@ public struct Run: Equatable, Identifiable, Sendable {
             time: 0...0
         )
     }
-    
+
+    /// Time-weighted averages of the metrics of the run
+    ///
+    /// Expressed in the same units as the segments they were derived from,
+    /// so a normalised run carries normalised averages. Helps measuring how
+    /// far the current segment deviates from the run's typical effort.
+    ///
+    public struct Averages: Equatable, Sendable {
+
+        /// Average heart rate. Zero readings are excluded
+        /// as they indicate missing sensor data.
+        ///
+        public let heartRate: Double
+
+        /// Average speed.
+        ///
+        public let speed: Double
+
+        /// Averages where each value is zero
+        ///
+        public static let zero = Averages(heartRate: 0, speed: 0)
+    }
+
     /// Unique identifier linking this runtime value back to its `RunRecord`.
     ///
     public let id: RunID
+
+    /// Averages of the metrics during the run
+    ///
+    public let averages: Averages
 
     /// Flat array of segment coordinates, pre-extracted for efficient rendering.
     ///
@@ -159,6 +185,9 @@ public struct Run: Equatable, Identifiable, Sendable {
     /// Designated initialiser — allows interpolators to preserve the original
     /// geographic path independently of the densified segments.
     ///
+    /// `averages` are always derived from `segments`, so they stay consistent
+    /// with whatever transformation produced them.
+    ///
     /// Prefer `init(id:date:name:segments:spectrum:)` for transformers and the parser.
     /// See `RunInterpolator` for the full rationale.
     ///
@@ -171,6 +200,7 @@ public struct Run: Equatable, Identifiable, Sendable {
         spectrum: Spectrum
     ) {
         self.id = id
+        self.averages = Averages(from: segments)
         self.coordinates = coordinates
         self.date = date
         self.name = name
@@ -239,5 +269,37 @@ extension Run.Spectrum {
             speed: (speeds.min() ?? 0)...(speeds.max() ?? 0),
             time: time
         )
+    }
+}
+
+extension Run.Averages {
+
+    /// Builds the averages by weighting each segment's metrics with its duration.
+    ///
+    /// Zero (or negative) values for heart rate are excluded as they indicate
+    /// missing sensor data, not actual readings.
+    ///
+    init(from segments: [Run.Segment]) {
+        self.init(
+            heartRate: Self.mean(of: \.heartRate, in: segments.filter { $0.heartRate > 0 }),
+            speed: Self.mean(of: \.speed, in: segments)
+        )
+    }
+
+    /// Returns the duration-weighted mean of the metric.
+    ///
+    /// Falls back to the plain mean when the segments have no duration,
+    /// and to zero when there are no segments.
+    ///
+    private static func mean(
+        of metric: KeyPath<Run.Segment, Double>,
+        in segments: [Run.Segment]
+    ) -> Double {
+        guard !segments.isEmpty else { return 0 }
+        let totalDuration = segments.reduce(0.0) { $0 + $1.duration }
+        guard totalDuration > 0 else {
+            return segments.reduce(0.0) { $0 + $1[keyPath: metric] } / Double(segments.count)
+        }
+        return segments.reduce(0.0) { $0 + $1[keyPath: metric] * $1.duration } / totalDuration
     }
 }
