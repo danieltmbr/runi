@@ -3,19 +3,25 @@ import SwiftUI
 /// A full-screen voronoi mosaic of a user-selected photo.
 ///
 /// Every voronoi cell is filled with the photo's colour at the cell's feature
-/// point. Around the current run coordinate the cells subdivide hierarchically,
-/// so the mosaic becomes denser — and the photo more detailed — where the runner is.
-/// The radii of that denser region come from `VoronoiRadiusModulator`, which
+/// point. Along the run path the cells subdivide hierarchically, and around the
+/// current run coordinate they subdivide further, so the mosaic becomes denser —
+/// and the photo more detailed — on the path and denser still where the runner is.
+/// The radii of those denser regions come from `VoronoiRadiusModulator`, which
 /// either keeps them fixed or lets them follow the runner's effort.
 ///
+/// The path reaches the shader as a `PathDistanceField` texture, rendered off the
+/// main thread whenever the visible path changes.
+///
 /// Driven by a `VisualiserState` value (constructed from run metrics in the app layer)
-/// and a `Voronoi` configuration binding for user-adjustable parameters.
+/// and a `VoronoiPath` configuration binding for user-adjustable parameters.
 /// The photo itself is owned by `VisualiserPhotoHolder` in the environment and
 /// displayed through `VisualiserPhotoCanvas`.
 ///
 public struct VoronoiPathView: View {
     
     private let modulator = VoronoiRadiusModulator()
+
+    private let fieldRenderer = PathDistanceFieldRenderer()
 
     let state: VisualiserState
 
@@ -26,6 +32,9 @@ public struct VoronoiPathView: View {
     
     @State
     private var visiblePath: [SIMD2<Float>] = []
+
+    @State
+    private var distanceField = PathDistanceField.empty
 
     public init(
         state: VisualiserState,
@@ -40,8 +49,9 @@ public struct VoronoiPathView: View {
         let gridSize    = Float(configuration.wrappedValue.gridSize)
         let maxRadius   = Float(radii.max)
         let minRadius   = Float(radii.min)
+        let pathRadius  = Float(configuration.wrappedValue.pathRadius)
         let coordinates = state.coordinates
-        let pathData    = visiblePath.withUnsafeBytes { Data($0) }
+        let fieldImage  = distanceField.image
 
         // `maxSampleOffset: .zero` is safe because the shader clamps all
         // sample positions to [0.5, size−0.5], never reading outside bounds.
@@ -54,8 +64,11 @@ public struct VoronoiPathView: View {
                             .float(gridSize),
                             .float(maxRadius),
                             .float(minRadius),
+                            .float(pathRadius),
                             .float2(coordinates),
-                            .data(pathData)
+                            .float(PathDistanceField.extent),
+                            .float(PathDistanceField.maxDistance),
+                            .image(fieldImage)
                         ),
                         maxSampleOffset: .zero
                     )
@@ -67,7 +80,23 @@ public struct VoronoiPathView: View {
                 .onChange(of: state.path) { _, _ in
                     recomputePath()
                 }
+                .task(id: visiblePath) {
+                    await renderDistanceField()
+                }
         }
+    }
+
+    // MARK: - Distance Field
+
+    /// Rasterises the visible path into the distance field the shader samples.
+    /// Runs off the main thread; the previous field stays in place until it is done.
+    ///
+    private func renderDistanceField() async {
+        let path = visiblePath
+        let renderer = fieldRenderer
+        let cgImage = await Task.detached(priority: .userInitiated) { renderer.render(path) }.value
+        guard !Task.isCancelled else { return }
+        distanceField = PathDistanceField(cgImage: cgImage)
     }
     
     // MARK: - LOD

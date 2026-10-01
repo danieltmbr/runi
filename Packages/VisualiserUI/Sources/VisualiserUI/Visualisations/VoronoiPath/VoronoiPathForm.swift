@@ -13,7 +13,12 @@ extension VoronoiPath: FormAdjustable {
 
 // MARK: - Form View
 
-
+/// Configuration controls for `VoronoiPath` shown via `AdjustableForm`.
+///
+/// Photo selection delegated to `VisualiserPhotoPicker`, followed by sliders for
+/// the grid size, a segmented density mode picker, the radius of the path band
+/// and the max / min radius of the density increase around the runner.
+///
 private struct VoronoiPathForm: View {
 
     @Binding
@@ -36,13 +41,19 @@ private struct VoronoiPathForm: View {
         .pickerStyle(.segmented)
 
         VStack(alignment: .leading) {
-            Text("Max Radius")
+            Text("Path Radius")
+                .font(.caption)
+            Slider(value: $value.pathRadius, in: 0.02...0.5)
+        }
+
+        VStack(alignment: .leading) {
+            Text("Runner Max Radius")
                 .font(.caption)
             Slider(value: $value.maxRadius, in: 0.1...0.5)
         }
 
         VStack(alignment: .leading) {
-            Text("Min Radius")
+            Text("Runner Min Radius")
                 .font(.caption)
             Slider(value: $value.minRadius, in: 0.05...value.maxRadius)
         }
