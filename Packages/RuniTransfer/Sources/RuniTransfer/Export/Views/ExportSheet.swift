@@ -2,6 +2,7 @@ import CoreTransferable
 import RunKit
 import SwiftUI
 import UniformTypeIdentifiers
+import VisualiserUI
 
 /// Sheet presenting two export options for any run entry.
 ///
@@ -26,6 +27,9 @@ public struct ExportSheet: View {
 
     @Environment(\.displayScale)
     private var displayScale
+
+    @Environment(\.visualiserPhoto)
+    private var photoHolder
 
     // MARK: - Runi Export State
 
@@ -133,7 +137,7 @@ public struct ExportSheet: View {
                 ExportOptionRow(
                     icon: "video",
                     title: "Video (.mp4)",
-                    subtitle: renderError == nil ? "Renders offline — takes a few seconds" : "Export failed — tap to retry"
+                    subtitle: renderError.map { "\($0.localizedDescription) Tap to retry." } ?? "Renders offline — takes a few seconds"
                 )
             }
             .buttonStyle(.plain)
@@ -178,7 +182,7 @@ public struct ExportSheet: View {
         videoProgress = 0
         renderedVideoURL = nil
         renderError = nil
-        let config = VideoExportConfig(resolution: resolution, logicalSize: viewportSize)
+        let config = VideoExportConfig(resolution: resolution, logicalSize: viewportSize, photo: photoHolder.data)
         Task {
             do {
                 let url = try await exportVideo(run, config: config) { @Sendable progress in

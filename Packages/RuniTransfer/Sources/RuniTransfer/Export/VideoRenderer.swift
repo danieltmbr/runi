@@ -12,10 +12,14 @@ import VisualiserUI
 /// animation at 30 fps (3600 frames) typically takes 30–60 seconds to render.
 ///
 /// The export pipeline uses dedicated Metal shaders (`export.metal`) compiled into
-/// `Bundle.visualiserUI`. These mirror the live `runWarpShader` / `runPathWarpShader`
-/// logic but use standard vertex + fragment functions rather than SwiftUI's
-/// `[[stitchable]]` calling convention, allowing them to be driven via a plain
-/// `MTLRenderCommandEncoder`.
+/// `Bundle.visualiserUI`. These mirror the live stitchable shaders but use standard
+/// vertex + fragment functions rather than SwiftUI's `[[stitchable]]` calling
+/// convention, allowing them to be driven via a plain `MTLRenderCommandEncoder`.
+///
+/// The renderer owns what all visualisations share: the Metal device, the render
+/// target and the video writer. What differs per visualisation — the fragment
+/// function and its uniforms, buffers and textures — is delegated to the
+/// `VideoFrameEncoder` the visualisation provides through `VideoExportable`.
 ///
 public struct VideoRenderer {
 
@@ -26,14 +30,21 @@ public struct VideoRenderer {
     public enum RenderError: LocalizedError {
         case noMetalDevice
         case metalLibraryNotFound
+        case photoMissing
+        case photoUnreadable
         case setupFailed(String)
+        case unsupportedVisualisation(String)
         case writeFailed(Error)
 
         public var errorDescription: String? {
             switch self {
             case .noMetalDevice:           return "No Metal device available."
             case .metalLibraryNotFound:    return "Export Metal library not found in Visualiser bundle."
+            case .photoMissing:            return "No photo is selected. Choose a photo for the visualisation first."
+            case .photoUnreadable:         return "The selected photo could not be read."
             case .setupFailed(let msg):    return "Export setup failed: \(msg)"
+            case .unsupportedVisualisation(let label):
+                return "Video export is not supported for the \(label) visualisation yet."
             case .writeFailed(let error):  return "Video write failed: \(error.localizedDescription)"
             }
         }
@@ -42,9 +53,11 @@ public struct VideoRenderer {
     // MARK: - Render
 
     /// Renders every frame to disk and returns the URL of the resulting `.mp4` file.
+    ///
+    /// - Parameter run: The normalised and interpolated run that drives the animation.
+    ///
     public func render(
-        segments: [Run.Segment],
-        path: [CGPoint],
+        run: Run,
         duration: TimeInterval,
         config: VideoExportConfig,
         visualisation: any Visualisation,
@@ -55,6 +68,7 @@ public struct VideoRenderer {
         let totalFrames = max(1, Int(duration * Double(fps)))
         let width = Int(config.resolution.width)
         let height = Int(config.resolution.height)
+        let path = run.coordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
 
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw RenderError.noMetalDevice
@@ -63,24 +77,24 @@ public struct VideoRenderer {
             throw RenderError.setupFailed("Could not create command queue")
         }
 
+        let frameEncoder = try makeFrameEncoder(
+            for: visualisation,
+            context: VideoFrameEncoderContext(
+                device: device,
+                logicalSize: config.logicalSize,
+                resolution: config.resolution,
+                path: path,
+                photo: config.photo
+            )
+        )
+
         guard let metalLibURL = Bundle.visualiserUI.url(forResource: "default", withExtension: "metallib") else {
             throw RenderError.metalLibraryNotFound
         }
         let library = try device.makeLibrary(URL: metalLibURL)
 
-        let (vertexFunction, fragmentFunction) = try shaderFunctions(library: library, visualisation: visualisation)
+        let (vertexFunction, fragmentFunction) = try shaderFunctions(library: library, fragmentName: frameEncoder.fragmentFunction)
         let pipeline = try makePipeline(device: device, vertex: vertexFunction, fragment: fragmentFunction)
-
-        let paletteTexture: MTLTexture? = (visualisation as? Warp).map {
-            try? makePaletteTexture(device: device, palette: $0.palette)
-        } ?? nil
-
-        let (pathBuffer, pathCount): (MTLBuffer?, Int32) = try makePathData(
-            device: device,
-            path: path,
-            visualisation: visualisation,
-            logicalSize: config.logicalSize
-        )
 
         let renderTexture = try makeRenderTexture(device: device, width: width, height: height)
 
@@ -115,21 +129,13 @@ public struct VideoRenderer {
 
         for i in 0..<totalFrames {
             let progress = totalFrames > 1 ? Double(i) / Double(totalFrames - 1) : 0.0
-            let time = Float(progress * duration)
-            let segment = segments.isEmpty ? Run.Segment.zero : segments[segmentIndex(at: progress, count: segments.count)]
 
             let pixelBuffer = try await renderFrame(
-                device: device,
                 commandQueue: commandQueue,
                 pipeline: pipeline,
                 renderTexture: renderTexture,
-                time: time,
-                segment: segment,
-                pathBuffer: pathBuffer,
-                pathCount: pathCount,
-                logicalSize: config.logicalSize,
-                visualisation: visualisation,
-                paletteTexture: paletteTexture
+                frameEncoder: frameEncoder,
+                state: state(of: run, path: path, at: progress, duration: duration)
             )
 
             let presentationTime = CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps))
@@ -153,17 +159,11 @@ public struct VideoRenderer {
     // MARK: - Frame Rendering
 
     private func renderFrame(
-        device: MTLDevice,
         commandQueue: MTLCommandQueue,
         pipeline: MTLRenderPipelineState,
         renderTexture: MTLTexture,
-        time: Float,
-        segment: Run.Segment,
-        pathBuffer: MTLBuffer?,
-        pathCount: Int32,
-        logicalSize: CGSize,
-        visualisation: any Visualisation,
-        paletteTexture: MTLTexture?
+        frameEncoder: any VideoFrameEncoder,
+        state: VisualiserState
     ) async throws -> CVPixelBuffer {
 
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
@@ -180,29 +180,7 @@ public struct VideoRenderer {
             throw RenderError.setupFailed("Could not create render encoder")
         }
         encoder.setRenderPipelineState(pipeline)
-
-        if visualisation is Warp {
-            try encodeWarpUniforms(
-                encoder: encoder,
-                device: device,
-                time: time,
-                segment: segment,
-                logicalSize: logicalSize,
-                visualisation: visualisation as! Warp,
-                paletteTexture: paletteTexture
-            )
-        } else {
-            try encodePathUniforms(
-                encoder: encoder,
-                device: device,
-                time: time,
-                segment: segment,
-                logicalSize: logicalSize,
-                pathBuffer: pathBuffer,
-                pathCount: pathCount
-            )
-        }
-
+        frameEncoder.encode(state, into: encoder)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
 
@@ -220,73 +198,28 @@ public struct VideoRenderer {
         return try readbackPixelBuffer(from: renderTexture)
     }
 
-    // MARK: - Uniform Encoding
-
-    private func encodeWarpUniforms(
-        encoder: MTLRenderCommandEncoder,
-        device: MTLDevice,
-        time: Float,
-        segment: Run.Segment,
-        logicalSize: CGSize,
-        visualisation: Warp,
-        paletteTexture: MTLTexture?
-    ) throws {
-        let elevation = Float(segment.elevation)
-        let elevationOffset = (1.0 - Double(elevation) - 0.5) * 0.3
-        let h = Float(max(0, min(1, visualisation.smoothness + elevationOffset)))
-
-        var uniforms = WarpUniforms(
-            time: time,
-            octaves: Float(visualisation.details),
-            h: h,
-            scale: 0.007,
-            speed: Float(segment.speed),
-            heartRate: Float(segment.heartRate),
-            dirX: Float(segment.direction.x),
-            dirY: Float(segment.direction.y),
-            offsetX: 0,
-            offsetY: 0,
-            sizeX: Float(logicalSize.width),
-            sizeY: Float(logicalSize.height)
-        )
-        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<WarpUniforms>.size, index: 0)
-
-        if let palette = paletteTexture {
-            encoder.setFragmentTexture(palette, index: 0)
-        }
-    }
-
-    private func encodePathUniforms(
-        encoder: MTLRenderCommandEncoder,
-        device: MTLDevice,
-        time: Float,
-        segment: Run.Segment,
-        logicalSize: CGSize,
-        pathBuffer: MTLBuffer?,
-        pathCount: Int32
-    ) throws {
-        var uniforms = PathUniforms(
-            time: time,
-            sizeX: Float(logicalSize.width),
-            sizeY: Float(logicalSize.height),
-            scale: 2.0,
-            offsetX: 0,
-            offsetY: 0,
-            coordinatesX: Float(segment.coordinate.x),
-            coordinatesY: Float(segment.coordinate.y),
-            directionX: Float(segment.direction.x),
-            directionY: Float(segment.direction.y),
+    /// Builds the state the visualisation sees at the given playback progress,
+    /// mirroring what the app feeds to the live canvas.
+    ///
+    private func state(
+        of run: Run,
+        path: [SIMD2<Float>],
+        at progress: Double,
+        duration: TimeInterval
+    ) -> VisualiserState {
+        let segments = run.segments
+        let segment = segments.isEmpty ? Run.Segment.zero : segments[segmentIndex(at: progress, count: segments.count)]
+        return VisualiserState(
+            averageHeartRate: Float(run.averages.heartRate),
+            averageSpeed: Float(run.averages.speed),
+            coordinates: SIMD2(Float(segment.coordinate.x), Float(segment.coordinate.y)),
+            direction: SIMD2(Float(segment.direction.x), Float(segment.direction.y)),
             elevation: Float(segment.elevation),
             heartRate: Float(segment.heartRate),
-            speed: Float(segment.speed)
+            path: path,
+            speed: Float(segment.speed),
+            time: Float(progress * duration)
         )
-        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<PathUniforms>.size, index: 0)
-
-        if let pathBuffer {
-            encoder.setFragmentBuffer(pathBuffer, offset: 0, index: 1)
-        }
-        var count = pathCount
-        encoder.setFragmentBytes(&count, length: MemoryLayout<Int32>.size, index: 2)
     }
 
     // MARK: - Texture Readback
@@ -326,15 +259,19 @@ public struct VideoRenderer {
 
     // MARK: - Setup Helpers
 
-    private func shaderFunctions(library: MTLLibrary, visualisation: any Visualisation) throws -> (MTLFunction, MTLFunction) {
+    private func makeFrameEncoder(
+        for visualisation: any Visualisation,
+        context: VideoFrameEncoderContext
+    ) throws -> any VideoFrameEncoder {
+        guard let exportable = visualisation as? any VideoExportable else {
+            throw RenderError.unsupportedVisualisation(visualisation.label)
+        }
+        return try exportable.makeFrameEncoder(in: context)
+    }
+
+    private func shaderFunctions(library: MTLLibrary, fragmentName: String) throws -> (MTLFunction, MTLFunction) {
         guard let vertex = library.makeFunction(name: "export_vertex") else {
             throw RenderError.setupFailed("export_vertex shader not found")
-        }
-        let fragmentName: String
-        switch visualisation {
-        case is Warp:    fragmentName = "export_warp_fragment"
-        case is RunPath: fragmentName = "export_path_warp_fragment"
-        default:         fragmentName = "export_warp_fragment"
         }
         guard let fragment = library.makeFunction(name: fragmentName) else {
             throw RenderError.setupFailed("\(fragmentName) shader not found")
@@ -348,45 +285,6 @@ public struct VideoRenderer {
         descriptor.fragmentFunction = fragment
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         return try device.makeRenderPipelineState(descriptor: descriptor)
-    }
-
-    private func makePaletteTexture(device: MTLDevice, palette: ColorPalette) throws -> MTLTexture {
-        let cgImage = PaletteGradientRenderer.render(palette)
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba8Unorm,
-            width: cgImage.width,
-            height: cgImage.height,
-            mipmapped: false
-        )
-        descriptor.usage = .shaderRead
-        guard let texture = device.makeTexture(descriptor: descriptor) else {
-            throw RenderError.setupFailed("Could not create palette texture")
-        }
-        let region = MTLRegion(origin: MTLOriginMake(0, 0, 0), size: MTLSizeMake(cgImage.width, 1, 1))
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-        let ctx = CGContext(data: nil, width: cgImage.width, height: 1, bitsPerComponent: 8,
-                            bytesPerRow: cgImage.width * 4, space: colorSpace,
-                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: 1))
-        if let data = ctx.data {
-            texture.replace(region: region, mipmapLevel: 0, withBytes: data, bytesPerRow: cgImage.width * 4)
-        }
-        return texture
-    }
-
-    private func makePathData(device: MTLDevice, path: [CGPoint], visualisation: any Visualisation, logicalSize: CGSize) throws -> (MTLBuffer?, Int32) {
-        guard !(visualisation is Warp), path.count > 1 else { return (nil, 0) }
-
-        let simd = path.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
-        let overviewEpsilon = Float(2.0 * 10.0 / (logicalSize.height / 2.0))
-        let indices = PathSimplifier.rdp(simd, epsilon: overviewEpsilon)
-        let simplified = simd.enumerated().compactMap { indices.contains($0.offset) ? $0.element : nil }
-
-        guard !simplified.isEmpty else { return (nil, 0) }
-        let buffer = device.makeBuffer(bytes: simplified,
-                                       length: simplified.count * MemoryLayout<SIMD2<Float>>.stride,
-                                       options: .storageModeShared)
-        return (buffer, Int32(simplified.count))
     }
 
     private func makeRenderTexture(device: MTLDevice, width: Int, height: Int) throws -> MTLTexture {
@@ -407,37 +305,4 @@ public struct VideoRenderer {
     private func segmentIndex(at progress: Double, count: Int) -> Int {
         min(Int(progress * Double(count)), count - 1)
     }
-}
-
-// MARK: - Uniform Structs (must match export.metal layout)
-
-private struct WarpUniforms {
-    var time: Float
-    var octaves: Float
-    var h: Float
-    var scale: Float
-    var speed: Float
-    var heartRate: Float
-    var dirX: Float
-    var dirY: Float
-    var offsetX: Float
-    var offsetY: Float
-    var sizeX: Float
-    var sizeY: Float
-}
-
-private struct PathUniforms {
-    var time: Float
-    var sizeX: Float
-    var sizeY: Float
-    var scale: Float
-    var offsetX: Float
-    var offsetY: Float
-    var coordinatesX: Float
-    var coordinatesY: Float
-    var directionX: Float
-    var directionY: Float
-    var elevation: Float
-    var heartRate: Float
-    var speed: Float
 }

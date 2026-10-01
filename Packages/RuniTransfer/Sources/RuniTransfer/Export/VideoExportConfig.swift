@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreGraphics
+import Foundation
 
 /// Configuration for an offline video export.
 public struct VideoExportConfig: Sendable {
@@ -25,10 +26,25 @@ public struct VideoExportConfig: Sendable {
     /// significantly better than H.264 at the same bitrate.
     public var codec: AVVideoCodecType
 
-    public init(resolution: CGSize, logicalSize: CGSize? = nil, fps: Int = 30, codec: AVVideoCodecType = .h264) {
+    /// Raw bytes of the base-layer photo for photo-based visualisations.
+    ///
+    /// The photo is transient window state rather than part of a run's stored
+    /// configuration, so the view starting the export passes along whatever
+    /// the window currently shows. `nil` when no photo is selected.
+    ///
+    public var photo: Data?
+
+    public init(
+        resolution: CGSize,
+        logicalSize: CGSize? = nil,
+        fps: Int = 30,
+        codec: AVVideoCodecType = .h264,
+        photo: Data? = nil
+    ) {
         self.resolution = resolution
         self.logicalSize = logicalSize ?? resolution
         self.fps = fps
         self.codec = codec
+        self.photo = photo
     }
 }

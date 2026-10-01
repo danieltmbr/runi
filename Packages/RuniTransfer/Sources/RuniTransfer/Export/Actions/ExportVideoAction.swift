@@ -48,8 +48,7 @@ public struct ExportVideoAction {
 
             return try await Task.detached(priority: .userInitiated) {
                 try await VideoRenderer().render(
-                    segments: normalised.segments,
-                    path: normalised.coordinates,
+                    run: normalised,
                     duration: duration,
                     config: config,
                     visualisation: visualisation,

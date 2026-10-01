@@ -15,6 +15,7 @@ public struct VisualisationList: View {
         Item(value: RunPath() as any Visualisation),
         Item(value: Gradients() as any Visualisation),
         Item(value: Voronoi() as any Visualisation),
+        Item(value: VoronoiPath() as any Visualisation),
     ]
 
     public init(visualisation: Binding<any Visualisation>) {

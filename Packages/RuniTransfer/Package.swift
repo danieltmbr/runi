@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "RuniTransfer", targets: ["RuniTransfer"]),
     ],
     dependencies: [
+        .package(path: "../CoreKit"),
         .package(path: "../CoreUI"),
         .package(path: "../RunKit"),
         .package(path: "../RunUI"),
@@ -22,6 +23,15 @@ let package = Package(
                 .product(name: "RunUI", package: "RunUI"),
                 .product(name: "VisualiserUI", package: "VisualiserUI"),
             ]
-        )
+        ),
+        .testTarget(
+            name: "RuniTransferTests",
+            dependencies: [
+                "RuniTransfer",
+                .product(name: "CoreKit", package: "CoreKit"),
+                .product(name: "RunKit", package: "RunKit"),
+                .product(name: "VisualiserUI", package: "VisualiserUI"),
+            ]
+        ),
     ]
 )

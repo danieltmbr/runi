@@ -20,35 +20,35 @@ import Foundation
 /// A small min radius reveals little detail (mellow), while radii that meet
 /// produce a sharp edge between low and high density (focused).
 ///
-struct VoronoiRadiusModulator {
+public struct VoronoiRadiusModulator: Sendable {
 
     /// The radii of the density field, in normalised coordinate space.
-    struct Radii: Equatable {
+    public struct Radii: Equatable, Sendable {
 
         /// Radius of the density increase at the coarsest level.
-        let max: Double
+        public let max: Double
 
         /// Radius of the density increase at the deepest subdivision level.
-        let min: Double
+        public let min: Double
     }
 
     /// Scales effort and strain before they are clamped to (-1, 1).
-    let gain: Double
+    public let gain: Double
 
     /// Lowest min radius, reached on the easiest effort.
-    let minRadiusFloor: Double
+    public let minRadiusFloor: Double
 
     /// Highest max radius the expansion can reach.
-    let maxRadiusCeiling: Double
+    public let maxRadiusCeiling: Double
 
     /// Factor the max radius grows by when the runner is fully blown up.
-    let maxRadiusExpansion: Double
+    public let maxRadiusExpansion: Double
 
     /// Fraction of the way the min radius opens towards
     /// the max radius when the runner is fully flowing.
-    let flowOpening: Double
+    public let flowOpening: Double
 
-    init(
+    public init(
         gain: Double = 1.0,
         minRadiusFloor: Double = 0.05,
         maxRadiusCeiling: Double = 1.5,
@@ -61,16 +61,39 @@ struct VoronoiRadiusModulator {
         self.maxRadiusExpansion = maxRadiusExpansion
         self.flowOpening = flowOpening
     }
-
-    /// Returns the radii for the given configuration at the current state of the run.
-    func radii(for configuration: Voronoi, state: VisualiserState) -> Radii {
-        let baseline = Radii(max: configuration.maxRadius, min: configuration.minRadius)
-        switch configuration.mode {
+    
+    public func radii(
+        min: Double,
+        max: Double,
+        mode: Voronoi.Mode,
+        state: VisualiserState
+    ) -> Radii {
+        let baseline = Radii(max: max, min: min)
+        switch mode {
         case .fixed:
             return baseline
         case .dynamic:
             return modulated(baseline, effort: effort(of: state), strain: strain(of: state))
         }
+    }
+
+    /// Returns the radii for the given configuration at the current state of the run.
+    public func radii(for configuration: Voronoi, state: VisualiserState) -> Radii {
+        radii(
+            min: configuration.minRadius,
+            max: configuration.maxRadius,
+            mode: configuration.mode,
+            state: state
+        )
+    }
+    
+    public func radii(for configuration: VoronoiPath, state: VisualiserState) -> Radii {
+        radii(
+            min: configuration.minRadius,
+            max: configuration.maxRadius,
+            mode: configuration.mode,
+            state: state
+        )
     }
 
     // MARK: - Private

@@ -17,6 +17,9 @@ float  fbm(float2 position, float octaves, float h);
 struct WarpResult { float f; float2 q; float2 r; };
 WarpResult runWarp(float2 p, float octaves, float h, float animTime, float2 flowDir);
 
+// Forward declaration — implemented in voronoi.metal
+float2 dynamicDensityVoronoiFeature(float2 uv, float gridSize, float maxRadius, float minRadius, float2 focus);
+
 // ============================================================
 // Vertex shader — full-screen triangle, no vertex buffer needed
 // ============================================================
@@ -194,4 +197,45 @@ fragment half4 export_path_warp_fragment(
     if (length(coords - cd2pos) < circleDiameter)      { color = float3(1.0, 0.22, 0.23); }
 
     return half4(half3(color), 1.0);
+}
+
+// ============================================================
+// Voronoi fragment shader — mirrors dynamicDensityVoronoi from voronoi.metal
+// ============================================================
+
+struct VoronoiUniforms {
+    float sizeX;
+    float sizeY;
+    float gridSize;
+    float maxRadius;
+    float minRadius;
+    float coordinatesX;
+    float coordinatesY;
+};
+
+// `photo` is expected to be pre-rendered aspect-filled to the viewport, so it
+// covers the canvas exactly like the SwiftUI layer the live shader samples.
+fragment half4 export_voronoi_fragment(
+    ExportVertex in [[stage_in]],
+    constant VoronoiUniforms& u [[buffer(0)]],
+    texture2d<half, access::sample> photo [[texture(0)]]
+) {
+    float2 size = float2(u.sizeX, u.sizeY);
+    float2 position = in.uv * size;
+    float minSide = min(size.x, size.y);
+
+    float2 uv = (2.0 * position - size) / minSide;
+
+    // Run coordinates are y-up while uv is y-down, so flip the vertical axis.
+    float2 focus = float2(u.coordinatesX, -u.coordinatesY);
+
+    float2 sampleUV = dynamicDensityVoronoiFeature(uv, u.gridSize, u.maxRadius, u.minRadius, focus);
+    float2 samplePosition = (sampleUV * minSide + size) * 0.5;
+
+    // Edge cells can have their feature point off-screen; clamp so they sample
+    // the nearest edge pixel instead of reading outside the photo bounds.
+    samplePosition = clamp(samplePosition, float2(0.5), size - float2(0.5));
+
+    constexpr sampler photoSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+    return half4(photo.sample(photoSampler, samplePosition / size).rgb, 1.0);
 }

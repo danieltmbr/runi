@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include <SwiftUI/SwiftUI.h>
-
+#include "voronoi.h"
 using namespace metal;
 
 float2 hash2( float2 p )
@@ -107,13 +107,6 @@ float2 inverseWarpCoordinate(float2 u, float2 c, float a, float w) {
 
 // MARK: - Dynamic Density Voronoi
 
-struct Cell {
-    float2 origin;
-    float2 position;
-    float2 target;
-    int    level;
-};
-
 float levelMultiplier(int level) {
     float m = 1;
     for (int i = 0; i < level; i++) {
@@ -159,22 +152,49 @@ float4x2 childrenFeatures(int level, float2 parent) {
     return features(level, children);
 }
 
-[[ stitchable ]] half4 dynamicDensityVoronoi(
-                                             float2 position,
-                                             SwiftUI::Layer layer,
-                                             float2 size,
-                                             float gridSize,
-                                             float maxRadius,   // density radius at the coarsest level, in uv units
-                                             float minRadius,   // density radius at the deepest level, in uv units
-                                             float2 coordinates // current run position in normalised space (-1, 1), y up
-                                             ) {
-    float minSide = min(size.x, size.y);
+void pushChildren(
+                  Cell cell,
+                  float2 runner,
+                  float maxRadius,
+                  float minRadius,
+                  int maxLevels,
+                  thread Cell *stack,
+                  thread int &stackSize
+                  ) {
+    float r = mix(maxRadius, minRadius, float(cell.level) / float(maxLevels));
+    float2 h = cell.position - runner;
+    float t = 1.0 - smoothstep(0.0, r * r, dot(h, h));
+    
+    if ( t <= 0.001 || cell.level >= maxLevels) return;
+    
+    int level = cell.level + 1;
+    float4x2 childCells    = childrenCells(level, cell.origin);
+    float4x2 childFeatures = features(level, childCells);
+    
+    for (int c=0; c<4; c++) {
+        stack[stackSize++] = {
+            .origin   = childCells[c],
+            .position = mix(cell.position, childFeatures[c], t),
+            .target   = childFeatures[c],
+            .level    = level
+        };
+    }
+}
 
-    float2 uv = (2.0 * position - size) / minSide;
-
-    // Run coordinates are y-up while uv is y-down, so flip the vertical axis.
-    float2 hoverUV = float2(coordinates.x, -coordinates.y);
-    float2 hoverP = hoverUV * gridSize;
+// Returns the voronoi feature point nearest to `uv`, in uv space.
+//
+// The grid subdivides hierarchically around `focus`, so cells get smaller —
+// and feature points denser — the closer they are to it. Shared by the live
+// `dynamicDensityVoronoi` shader and the `export_voronoi_fragment` in export.metal,
+// which only differ in how they sample the photo at the returned point.
+float2 dynamicDensityVoronoiFeature(
+                                    float2 uv,         // aspect-preserving space, y down, ±1 on the short side
+                                    float gridSize,
+                                    float maxRadius,   // density radius at the coarsest level, in uv units
+                                    float minRadius,   // density radius at the deepest level, in uv units
+                                    float2 focus       // centre of the density increase, in uv space
+                                    ) {
+    float2 runner = focus * gridSize;
 
     float2 p = uv * gridSize;
 
@@ -191,9 +211,8 @@ float4x2 childrenFeatures(int level, float2 parent) {
     Cell stack[16];
     int stackSize = 0;
     
-    float  nearestD2  = FLT_MAX;
-    int    nearestLvl = 0;
-    float2 nearest    = float2(FLT_MAX);
+    float nearestD2 = FLT_MAX;
+    Cell  nearest;
     
     for (int i = -1; i <= 1; i++)
     for (int j = -1; j <= 1; j++) {
@@ -211,37 +230,36 @@ float4x2 childrenFeatures(int level, float2 parent) {
         
         while (stackSize) {
             Cell cell = stack[--stackSize];
-            
             float2 d = cell.position - p;
             float dd = dot(d, d);
             if (nearestD2 > dd) {
                 nearestD2  = dd;
-                nearestLvl = cell.level;
-                nearest    = cell.position;
+                nearest = cell;
             }
-            
-            float  r = mix(maxRadius, minRadius, float(cell.level) / float(MAX_LEVELS));
-            float2 h = cell.position - hoverP;
-            float  t = 1.0 - smoothstep(0.0, r * r, dot(h, h));
-            
-            if ( t > 0.001 && cell.level < MAX_LEVELS) {
-                int level = cell.level + 1;
-                float4x2 childCells    = childrenCells(level, cell.origin);
-                float4x2 childFeatures = features(level, childCells);
-                
-                for (int c=0; c<4; c++) {
-                    stack[stackSize++] = {
-                        .origin   = childCells[c],
-                        .position = mix(cell.position, childFeatures[c], t),
-                        .target   = childFeatures[c],
-                        .level    = level
-                    };
-                }
-            }
+            pushChildren(cell, runner, maxRadius, minRadius, MAX_LEVELS, stack, stackSize);
         }
     }
     
-    float2 sampleUV = nearest / gridSize;
+    return nearest.position / gridSize;
+}
+
+[[ stitchable ]] half4 dynamicDensityVoronoi(
+                                             float2 position,
+                                             SwiftUI::Layer layer,
+                                             float2 size,
+                                             float gridSize,
+                                             float maxRadius,   // density radius at the coarsest level, in uv units
+                                             float minRadius,   // density radius at the deepest level, in uv units
+                                             float2 coordinates // current run position in normalised space (-1, 1), y up
+                                             ) {
+    float minSide = min(size.x, size.y);
+
+    float2 uv = (2.0 * position - size) / minSide;
+
+    // Run coordinates are y-up while uv is y-down, so flip the vertical axis.
+    float2 runner = float2(coordinates.x, -coordinates.y);
+
+    float2 sampleUV = dynamicDensityVoronoiFeature(uv, gridSize, maxRadius, minRadius, runner);
     float2 samplePosition = (sampleUV * minSide + size) * 0.5;
 
     // Edge cells can have their feature point off-screen; clamp so they sample
